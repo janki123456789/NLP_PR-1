@@ -1,269 +1,338 @@
-import streamlit as st
-import pandas as pd
-import nltk
-import joblib
-from nltk.sentiment import SentimentIntensityAnalyzer
-from nlp_utils import clean_text, heuristic_sentiment
+import re
+from pathlib import Path
 
+import joblib
+import pandas as pd
+import streamlit as st
+
+# ---------------------------------------------------------
+# Page setup
+# ---------------------------------------------------------
 st.set_page_config(
-    page_title="Airline Tweet Sentiment Analyzer",
+    page_title="Airline Sentiment Studio",
     page_icon="✈️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# ---------- Design ----------
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
-html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
-.stApp { background: linear-gradient(135deg, #f7f9fc 0%, #eef3fb 100%); }
-.block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 1180px; }
-.hero {
-    padding: 30px 34px; border-radius: 24px;
-    background: linear-gradient(115deg, #111827 0%, #23395d 58%, #315b83 100%);
-    color: white; margin-bottom: 22px;
-    box-shadow: 0 14px 35px rgba(24, 43, 71, .16);
-}
-.hero h1 { font-family: 'Manrope', sans-serif; font-size: 2.25rem; margin: 5px 0 8px; color: white; }
-.hero p { color: #d8e5f5; font-size: 1rem; margin: 0; }
-.eyebrow { color: #9ec5f5; font-size: .76rem; font-weight: 700; letter-spacing: 2px; }
-.metric-card {
-    background: white; border: 1px solid #e4eaf2; border-radius: 18px;
-    padding: 17px 19px; box-shadow: 0 5px 18px rgba(35, 57, 93, .05);
-}
-.metric-label { color: #718096; font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; }
-.metric-value { color: #172b4d; font-family: 'Manrope', sans-serif; font-size: 1.35rem; font-weight: 800; margin-top: 5px; }
-.section-title { color: #172b4d; font-family: 'Manrope', sans-serif; font-size: 1.25rem; font-weight: 800; margin: 12px 0; }
-div.stButton > button {
-    border-radius: 12px; border: 1px solid #d9e2ef; background: white;
-    color: #23395d; font-weight: 700; min-height: 42px;
-}
-div.stButton > button:hover { border-color: #4778ad; color: #1d4f85; }
-div.stButton > button[kind="primary"] {
-    background: linear-gradient(90deg, #245b91, #397db5);
-    border: 0; color: white; border-radius: 13px; min-height: 48px;
-}
-div[data-testid="stExpander"] { background: white; border: 1px solid #e4eaf2; border-radius: 14px; }
-div[data-testid="stTextArea"] textarea { border-radius: 14px; }
-footer {visibility: hidden;}
-</style>
-""", unsafe_allow_html=True)
+MODEL_PATH = Path(__file__).parent / "sentiment_model.joblib"
+DATA_PATH = Path(__file__).parent / "Tweets.csv"
 
-# ---------- NLTK resources ----------
-@st.cache_resource
-def setup_nltk():
-    resources = [
-        ("sentiment/vader_lexicon.zip", "vader_lexicon"),
-        ("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng"),
-        ("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger"),
-        ("tokenizers/punkt", "punkt"),
-        ("corpora/stopwords", "stopwords")
-    ]
-    for path, name in resources:
-        try:
-            nltk.data.find(path)
-        except LookupError:
-            try:
-                nltk.download(name, quiet=True)
-            except Exception:
-                pass
-    try:
-        return SentimentIntensityAnalyzer()
-    except Exception:
-        return None
+# ---------------------------------------------------------
+# Styling
+# ---------------------------------------------------------
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
 
-@st.cache_resource
-def load_model():
-    try:
-        return joblib.load("sentiment_model.joblib")
-    except Exception:
-        return None
-
-sia = setup_nltk()
-model = load_model()
-
-# ---------- Sidebar ----------
-with st.sidebar:
-    st.markdown("## ✈️ Project Guide")
-    st.caption("NLP Practical Report 1")
-    st.markdown("---")
-    st.markdown("**About this project**")
-    st.write("An airline tweet sentiment analyzer that classifies a message as positive, negative or neutral.")
-    st.markdown("**Dataset**")
-    st.write("Twitter US Airline Sentiment")
-    st.markdown("[Open dataset on Kaggle](https://www.kaggle.com/datasets/crowdflower/twitter-airline-sentiment)")
-    st.markdown("---")
-    st.markdown("**Methods included**")
-    st.write("• Heuristic rules\n\n• NLTK VADER\n\n• Machine-learning pipeline")
-    st.caption("Built with Python + Streamlit")
-
-# ---------- Header ----------
-st.markdown("""
-<div class="hero">
-  <div class="eyebrow">NATURAL LANGUAGE PROCESSING · PR 1</div>
-  <h1>Airline Tweet Sentiment Analyzer ✈️</h1>
-  <p>Understand how passengers feel. Enter a tweet, choose an NLP approach, and explore the prediction.</p>
-</div>
-""", unsafe_allow_html=True)
-
-# Summary cards
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.markdown('<div class="metric-card"><div class="metric-label">Task</div><div class="metric-value">Sentiment Analysis</div></div>', unsafe_allow_html=True)
-with c2:
-    st.markdown('<div class="metric-card"><div class="metric-label">Output classes</div><div class="metric-value">3 sentiments</div></div>', unsafe_allow_html=True)
-with c3:
-    st.markdown('<div class="metric-card"><div class="metric-label">NLP approaches</div><div class="metric-value">3 methods</div></div>', unsafe_allow_html=True)
-
-st.write("")
-left, right = st.columns([1.35, 0.85], gap="large")
-
-with left:
-    st.markdown('<div class="section-title">💬 Enter a passenger tweet</div>', unsafe_allow_html=True)
-
-    examples = {
-        "😊 Positive example": "The crew was amazing and the flight was comfortable. Thank you!",
-        "😡 Negative example": "My flight was delayed again and the customer service was terrible.",
-        "😐 Negation example": "I am not happy with the delay, but the staff was helpful."
+    html, body, [class*="css"] {
+        font-family: 'DM Sans', sans-serif;
     }
-    bcols = st.columns(3)
-    for col, (label, example) in zip(bcols, examples.items()):
-        with col:
-            if st.button(label, use_container_width=True):
-                st.session_state["tweet_input"] = example
+    .stApp {
+        background:
+          radial-gradient(circle at 8% 0%, rgba(99,102,241,.12), transparent 27%),
+          radial-gradient(circle at 95% 5%, rgba(14,165,233,.10), transparent 25%),
+          #f6f8fc;
+    }
+    .block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 1250px; }
+    h1, h2, h3 { font-family: 'Manrope', sans-serif !important; color: #17233d; }
+    .hero {
+        padding: 30px 32px;
+        border-radius: 24px;
+        color: white;
+        background: linear-gradient(120deg, #172554 0%, #3730a3 52%, #0369a1 100%);
+        box-shadow: 0 18px 45px rgba(30, 41, 99, .18);
+        margin-bottom: 24px;
+    }
+    .hero h1 { color: white !important; font-size: 2.35rem; margin: 0 0 8px 0; }
+    .hero p { color: #dbeafe; font-size: 1.02rem; margin: 0; }
+    .eyebrow {
+        color: #bfdbfe; text-transform: uppercase; letter-spacing: .16em;
+        font-size: .72rem; font-weight: 700; margin-bottom: 10px;
+    }
+    .panel {
+        background: rgba(255,255,255,.92);
+        border: 1px solid #e6eaf2;
+        border-radius: 18px;
+        padding: 20px 22px;
+        box-shadow: 0 8px 24px rgba(15,23,42,.045);
+    }
+    .muted { color: #64748b; font-size: .92rem; }
+    .sentiment {
+        display: inline-block; padding: 7px 13px; border-radius: 999px;
+        font-size: .82rem; font-weight: 700; letter-spacing: .04em;
+    }
+    .positive { background: #dcfce7; color: #166534; }
+    .neutral { background: #e2e8f0; color: #334155; }
+    .negative { background: #fee2e2; color: #991b1b; }
+    div[data-testid="stMetric"] {
+        background: white; border: 1px solid #e6eaf2; padding: 16px;
+        border-radius: 16px; box-shadow: 0 6px 18px rgba(15,23,42,.04);
+    }
+    div.stButton > button, div.stDownloadButton > button {
+        border-radius: 12px; font-weight: 700; min-height: 2.8rem;
+    }
+    section[data-testid="stSidebar"] { background: #eef2ff; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-    tweet = st.text_area(
-        "Tweet text",
-        key="tweet_input",
-        height=155,
-        placeholder="Example: My flight was delayed and the service was poor..."
+# ---------------------------------------------------------
+# Text cleaning: keeps the app independent from NLTK downloads
+# ---------------------------------------------------------
+def clean_text(text):
+    text = str(text).lower()
+    text = re.sub(r"https?://\S+|www\.\S+", " ", text)
+    text = re.sub(r"@\w+", " ", text)
+    text = re.sub(r"#(\w+)", r"\1", text)
+    text = re.sub(r"\d+", " ", text)
+    text = re.sub(r"[^a-z\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+# Simple fallback so the page can still open if the model file is missing.
+POSITIVE_WORDS = {
+    "good", "great", "excellent", "amazing", "awesome", "love", "thank",
+    "thanks", "helpful", "friendly", "wonderful", "best", "nice", "happy",
+    "appreciate", "smooth", "comfortable", "quick", "easy", "perfect"
+}
+NEGATIVE_WORDS = {
+    "bad", "worst", "poor", "late", "delay", "delayed", "cancel", "cancelled",
+    "lost", "rude", "angry", "hate", "terrible", "awful", "broken", "problem",
+    "issue", "missed", "disappointed", "unhelpful"
+}
+
+def fallback_predict(text):
+    words = clean_text(text).split()
+    pos = sum(word in POSITIVE_WORDS for word in words)
+    neg = sum(word in NEGATIVE_WORDS for word in words)
+    if pos > neg:
+        return "positive"
+    if neg > pos:
+        return "negative"
+    return "neutral"
+
+
+@st.cache_resource(show_spinner=False)
+def load_model():
+    if MODEL_PATH.exists():
+        return joblib.load(MODEL_PATH)
+    return None
+
+
+def predict_sentiment(text, model):
+    cleaned = clean_text(text)
+    if not cleaned:
+        return "neutral", cleaned, "The text is empty after cleaning."
+    if model is not None:
+        try:
+            prediction = str(model.predict([cleaned])[0]).lower()
+            if prediction not in {"positive", "neutral", "negative"}:
+                prediction = prediction.strip()
+            return prediction, cleaned, "TF-IDF + Logistic Regression model"
+        except Exception as exc:
+            return fallback_predict(text), cleaned, f"Fallback used because model prediction failed: {exc}"
+    return fallback_predict(text), cleaned, "Simple word-list fallback (model file not found)"
+
+
+# ---------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------
+with st.sidebar:
+    st.markdown("## ✈️ Sentiment Studio")
+    st.caption("Airline Tweet Analysis")
+    st.divider()
+    page = st.radio(
+        "NAVIGATION",
+        ["Sentiment Analyzer", "Dataset Insights", "About Project"],
+        label_visibility="visible",
     )
-
-    approach = st.selectbox(
-        "Choose an NLP approach",
-        ["Heuristic", "VADER", "ML Model"],
-        help="Compare a simple rule-based method, a ready-made sentiment analyzer, and your trained model."
-    )
-
-    predict = st.button("✨  Analyze sentiment", type="primary", use_container_width=True)
-
-with right:
-    st.markdown('<div class="section-title">🧭 How it works</div>', unsafe_allow_html=True)
-    st.markdown("""
-    <div class="metric-card">
-      <b>01 · Input</b><br><span style="color:#718096">Type or select a sample tweet.</span><br><br>
-      <b>02 · Cleaning</b><br><span style="color:#718096">Remove URLs, mentions and extra symbols.</span><br><br>
-      <b>03 · Prediction</b><br><span style="color:#718096">Run the selected sentiment approach.</span><br><br>
-      <b>04 · Insights</b><br><span style="color:#718096">View the result, probability chart and POS tags.</span>
-    </div>
-    """, unsafe_allow_html=True)
-    st.write("")
-    if model is None:
-        st.info("ML model file not found. Heuristic and VADER are ready. Run the notebook's save-model cell and place sentiment_model.joblib beside app.py to enable ML Model.")
-    else:
-        st.success("Trained ML model loaded successfully.")
-
-# ---------- Prediction ----------
-if predict:
-    if not tweet.strip():
-        st.warning("Please enter a tweet before clicking Analyze.")
-    else:
-        original = tweet.strip()
-        if len(original) > 500:
-            original = original[:500]
-            st.warning("Your tweet was longer than 500 characters, so only the first 500 characters were analyzed.")
-
-        cleaned = clean_text(original)
-        if not cleaned:
-            st.warning("The tweet became empty after cleaning. Please enter words rather than only emojis, symbols or a URL.")
+    st.divider()
+    st.markdown("**Model status**")
+    try:
+        model = load_model()
+        if model is not None:
+            st.success("Trained model loaded")
         else:
-            label = None
-            probabilities = None
-            explanation = ""
+            st.warning("Model file not found — fallback mode")
+    except Exception as model_error:
+        model = None
+        st.error("Model could not be loaded")
+        st.caption(str(model_error)[:220])
+    st.caption("Expected file: sentiment_model.joblib")
+    st.caption("Built with Python · NLP · Streamlit")
 
-            if approach == "Heuristic":
-                label, pos_score, neg_score = heuristic_sentiment(original)
-                total = pos_score + neg_score
-                if total:
-                    probabilities = {
-                        "negative": neg_score / total,
-                        "neutral": 0.0,
-                        "positive": pos_score / total
-                    }
-                explanation = f"Positive word score: {pos_score} · Negative word score: {neg_score}"
+# ---------------------------------------------------------
+# Hero
+# ---------------------------------------------------------
+st.markdown(
+    """
+    <div class="hero">
+      <div class="eyebrow">NATURAL LANGUAGE PROCESSING · PROJECT PR-1</div>
+      <h1>Airline Sentiment Studio</h1>
+      <p>Turn airline customer tweets into clear sentiment insights — positive, neutral, or negative.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-            elif approach == "VADER":
-                if sia is None:
-                    st.error("VADER could not be loaded. Please check your internet connection and restart the app.")
-                else:
-                    score = sia.polarity_scores(original)["compound"]
-                    if score >= 0.05:
-                        label = "positive"
-                    elif score <= -0.05:
-                        label = "negative"
-                    else:
-                        label = "neutral"
-                    explanation = f"VADER compound score: {score:.3f}"
-                    probabilities = {
-                        "negative": max(0.0, -score),
-                        "neutral": 1.0 - abs(score),
-                        "positive": max(0.0, score)
-                    }
+# ---------------------------------------------------------
+# Page 1: Analyzer
+# ---------------------------------------------------------
+if page == "Sentiment Analyzer":
+    st.markdown("### Explore a customer tweet")
+    st.markdown('<p class="muted">Enter a tweet below and let the NLP model classify its sentiment.</p>', unsafe_allow_html=True)
 
+    col_input, col_examples = st.columns([1.55, 1], gap="large")
+    with col_input:
+        tweet = st.text_area(
+            "Your tweet",
+            placeholder="Example: My flight was delayed and the customer service was terrible...",
+            height=155,
+            max_chars=5000,
+        )
+        analyze = st.button("✨  Analyze sentiment", type="primary", use_container_width=True)
+    with col_examples:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("**Try an example**")
+        examples = {
+            "😊 Positive": "The crew was amazing and the flight was very comfortable. Thank you!",
+            "😐 Neutral": "My flight from Delhi to Mumbai is scheduled for 6 PM.",
+            "😞 Negative": "My flight was delayed for hours and the staff was very rude.",
+        }
+        for label, example in examples.items():
+            if st.button(label, use_container_width=True):
+                st.session_state["example_tweet"] = example
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    if "example_tweet" in st.session_state and not tweet:
+        tweet = st.session_state["example_tweet"]
+
+    if analyze:
+        if not tweet.strip():
+            st.warning("Please enter a tweet before analyzing.")
+        else:
+            with st.spinner("Analyzing tweet..."):
+                label, cleaned, method = predict_sentiment(tweet, model)
+            st.markdown("---")
+            st.markdown("### Analysis result")
+            css_label = label if label in {"positive", "neutral", "negative"} else "neutral"
+            emoji = {"positive": "😊", "neutral": "😐", "negative": "😞"}.get(css_label, "🔎")
+            result_col, clean_col = st.columns([1, 1], gap="large")
+            with result_col:
+                st.markdown(
+                    f'<div class="panel"><div class="muted">PREDICTED SENTIMENT</div>'
+                    f'<h2 style="margin:10px 0 14px 0;">{emoji} {label.title()}</h2>'
+                    f'<span class="sentiment {css_label}">{label.upper()}</span>'
+                    f'<p class="muted" style="margin-top:16px;">Method: {method}</p></div>',
+                    unsafe_allow_html=True,
+                )
+            with clean_col:
+                st.markdown('<div class="panel">', unsafe_allow_html=True)
+                st.markdown("**Cleaned text**")
+                st.write(cleaned if cleaned else "No words left after cleaning.")
+                st.markdown("</div>", unsafe_allow_html=True)
+            st.info("This is a text classification prediction, not a guarantee of the customer's actual intention.")
+
+    st.markdown("---")
+    st.markdown("### How it works")
+    flow_cols = st.columns(4)
+    steps = [
+        ("01", "Input", "Customer tweet"),
+        ("02", "Cleaning", "URLs, mentions, symbols"),
+        ("03", "TF-IDF", "Text to numeric features"),
+        ("04", "Prediction", "3 sentiment classes"),
+    ]
+    for col, (number, title, desc) in zip(flow_cols, steps):
+        with col:
+            st.markdown(
+                f'<div class="panel"><div class="muted">{number}</div>'
+                f'<h3 style="margin:6px 0;">{title}</h3><div class="muted">{desc}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+# ---------------------------------------------------------
+# Page 2: Dataset insights
+# ---------------------------------------------------------
+elif page == "Dataset Insights":
+    st.markdown("### Dataset overview")
+    st.markdown(
+        '<p class="muted">Optional visual exploration of Tweets.csv. Add the dataset beside app.py to enable these charts.</p>',
+        unsafe_allow_html=True,
+    )
+    if DATA_PATH.exists():
+        try:
+            data = pd.read_csv(DATA_PATH)
+            required = {"text", "airline_sentiment"}
+            if not required.issubset(data.columns):
+                st.error("Tweets.csv must contain text and airline_sentiment columns.")
             else:
-                if model is None:
-                    st.error("ML model is not available. Save sentiment_model.joblib from your notebook and place it in this project folder.")
-                else:
-                    try:
-                        label = str(model.predict([cleaned])[0]).lower()
-                        if hasattr(model, "predict_proba"):
-                            probs = model.predict_proba([cleaned])[0]
-                            probabilities = {str(cls): float(p) for cls, p in zip(model.classes_, probs)}
-                        explanation = "Prediction from your saved scikit-learn pipeline."
-                    except Exception as e:
-                        st.error(f"Could not predict with the saved model: {e}")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Total tweets", f"{len(data):,}")
+                c2.metric("Airlines", str(data["airline"].nunique()) if "airline" in data else "N/A")
+                c3.metric("Sentiment classes", str(data["airline_sentiment"].nunique()))
+                left, right = st.columns(2, gap="large")
+                with left:
+                    st.markdown("**Sentiment distribution**")
+                    counts = data["airline_sentiment"].value_counts().rename_axis("Sentiment").to_frame("Tweets")
+                    st.bar_chart(counts)
+                with right:
+                    if "airline" in data.columns:
+                        st.markdown("**Tweets by airline**")
+                        airline_counts = data["airline"].value_counts().to_frame("Tweets")
+                        st.bar_chart(airline_counts)
+                st.markdown("**Sample records**")
+                st.dataframe(data[["airline_sentiment", "airline", "text"]].head(10), use_container_width=True)
+        except Exception as data_error:
+            st.error(f"Could not read Tweets.csv: {data_error}")
+    else:
+        st.info("Dataset file is optional. Upload Tweets.csv to the same GitHub folder as app.py to display dataset charts.")
+        st.markdown("**Required columns:** `text`, `airline_sentiment` (and optionally `airline`).")
 
-            if label:
-                st.markdown("---")
-                st.markdown('<div class="section-title">📊 Analysis result</div>', unsafe_allow_html=True)
-                result_col, detail_col = st.columns([1, 1.2])
-                with result_col:
-                    if label == "positive":
-                        st.success("😊  POSITIVE")
-                    elif label == "negative":
-                        st.error("😟  NEGATIVE")
-                    else:
-                        st.warning("😐  NEUTRAL")
-                    st.caption(explanation)
-                with detail_col:
-                    st.markdown("**Cleaned text**")
-                    st.write(cleaned)
-
-                if probabilities:
-                    chart_data = pd.DataFrame({
-                        "Sentiment": list(probabilities.keys()),
-                        "Score": list(probabilities.values())
-                    }).set_index("Sentiment")
-                    st.markdown("**Sentiment score / class probabilities**")
-                    st.bar_chart(chart_data, height=210)
-
-                with st.expander("🔎 Explore Part-of-Speech (POS) tags"):
-                    try:
-                        tokens = nltk.word_tokenize(cleaned)
-                        tags = nltk.pos_tag(tokens)
-                        pos_df = pd.DataFrame(tags, columns=["Word", "POS Tag"])
-                        st.dataframe(pos_df, use_container_width=True, hide_index=True)
-                    except LookupError:
-                        st.warning("NLTK POS tagger data is missing. Restart the app after the resource download.")
-                    except Exception as e:
-                        st.warning(f"POS tagging is not available: {e}")
+# ---------------------------------------------------------
+# Page 3: About
+# ---------------------------------------------------------
+else:
+    st.markdown("### About this project")
+    st.write(
+        "This project analyzes US airline customer tweets using Natural Language Processing. "
+        "The goal is to classify each tweet into one of three sentiment categories: positive, neutral, or negative."
+    )
+    a, b = st.columns(2, gap="large")
+    with a:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("**NLP workflow**")
+        st.markdown(
+            "- Dataset exploration and visualization\n"
+            "- Text cleaning with regular expressions\n"
+            "- Tokenization and stop-word handling\n"
+            "- Bag-of-Words and TF-IDF features\n"
+            "- Word2Vec embeddings\n"
+            "- TF-IDF + Logistic Regression classification\n"
+            "- POS tagging and analysis"
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+    with b:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("**Technology stack**")
+        st.markdown(
+            "- Python\n"
+            "- Pandas\n"
+            "- Scikit-learn\n"
+            "- NLTK (not required by this app interface)\n"
+            "- Joblib\n"
+            "- Streamlit"
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.caption("Model file: sentiment_model.joblib — exported from Task 6.7 of the project notebook.")
 
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#718096;font-size:.82rem'>"
-    "NLP Practical Report 1 · Airline Tweet Sentiment Analyzer<br>"
-    "Made with Python, NLTK, scikit-learn and Streamlit"
-    "</div>",
-    unsafe_allow_html=True
+    '<div style="text-align:center;color:#94a3b8;font-size:.82rem;">'
+    'AIRLINE SENTIMENT STUDIO · NLP PR-1 · Built with Streamlit</div>',
+    unsafe_allow_html=True,
 )

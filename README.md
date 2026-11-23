@@ -63,7 +63,7 @@ The project follows an end-to-end NLP workflow, from exploring raw tweets and cl
 | Resource | Link |
 |---|---|
 | 📊 Dataset (Kaggle – Twitter US Airline Sentiment) | https://www.kaggle.com/datasets/crowdflower/twitter-airline-sentiment |
-| 🚀 Deployed Streamlit link | STREAMLIT_APP_URL |
+| 🚀 Deployed Streamlit link | https://nlp-pr-1.streamlit.app/ |
 
 ## 🔄 NLP Workflow
 
